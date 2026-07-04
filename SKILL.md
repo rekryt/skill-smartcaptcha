@@ -8,6 +8,9 @@ description: >-
   smart-token, smartcaptcha.yandexcloud.net, yandex_smartcaptcha_captcha, защита форм/логина/регистрации от ботов и
   спама в Yandex Cloud, стоимость или квоты SmartCaptcha, а также когда капча Яндекса не отображается или пропускает
   ботов — даже если слово «капча» не прозвучало, но нужна антибот-защита веб-формы или мобильного приложения.
+  Обязательно используй и когда виджет капчи не совпадает с темой сайта: «капча светлая при тёмной теме»,
+  «тёмная тема капчи», «Динамическая цветовая схема», параметр theme виджета, синхронизация с переключателем
+  тёмной/светлой темы.
 ---
 
 # Yandex SmartCaptcha — интеграция и управление
@@ -27,6 +30,7 @@ Yandex SmartCaptcha — сервис Yandex Cloud для защиты сайто
 | Ключи | Ключ клиента (`ysc1_…`, публичный, для виджета) и ключ сервера (`ysc2_…`, секрет, только на бэкенде, env `SMARTCAPTCHA_SERVER_KEY`) |
 | React | Пакет `@yandex/smart-captcha` (официальный) |
 | Vue 3 | Официального пакета нет — composable на расширенном методе, см. [docs/vue.md](docs/vue.md) |
+| Тёмная тема виджета | «Динамическая цветовая схема» у капчи + параметр `theme` в `render()` (`'light'/'dark'/'auto'`, недокументированный) — [docs/theming.md](docs/theming.md) |
 | Управление | REST `https://smartcaptcha.api.cloud.yandex.net/smartcaptcha/v1/captchas`, CLI `yc smartcaptcha captcha`, Terraform `yandex_smartcaptcha_captcha` |
 
 ## Выбор сценария
@@ -39,6 +43,7 @@ Yandex SmartCaptcha — сервис Yandex Cloud для защиты сайто
 | Капча во Vue 3 / Nuxt | [workflows/integrate-react.md](workflows/integrate-react.md) (шаги те же, код — Vue) | [docs/vue.md](docs/vue.md) |
 | Капча в мобильном приложении | [workflows/integrate-mobile.md](workflows/integrate-mobile.md) | [docs/mobile-webview.md](docs/mobile-webview.md) + файл платформы |
 | Капча без кнопки «Я не робот» | [workflows/integrate-website.md](workflows/integrate-website.md) | [docs/invisible-captcha.md](docs/invisible-captcha.md) |
+| Тёмная/светлая тема виджета (капча не совпадает с темой сайта) | — | [docs/theming.md](docs/theming.md) |
 | Капча не работает / пропускает ботов | — | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | Оценить стоимость и лимиты | — | [docs/pricing-limits.md](docs/pricing-limits.md) |
 
@@ -54,6 +59,7 @@ Yandex SmartCaptcha — сервис Yandex Cloud для защиты сайто
 - [docs/widget-auto.md](docs/widget-auto.md) — автоматический метод: `div.smart-captcha`, data-атрибуты, скрытое поле `smart-token`.
 - [docs/widget-advanced.md](docs/widget-advanced.md) — расширенный метод: `?render=onload`, `window.smartCaptcha.render()`, callback, несколько виджетов, отправка токена fetch'ем, отложенная загрузка.
 - [docs/invisible-captcha.md](docs/invisible-captcha.md) — невидимая капча: `invisible: true` + `execute()`, уведомление об обработке данных (`shieldPosition`/`hideShield`).
+- [docs/theming.md](docs/theming.md) — тёмная/светлая тема: «Динамическая цветовая схема» + недокументированный параметр `theme` (реверс-инжиниринг captcha.js), синхронизация с ручным переключателем темы сайта через пересоздание виджета.
 
 **Серверная проверка:**
 - [docs/server-validation.md](docs/server-validation.md) — проверка токена на `/validate`: параметры, разбор ответов, «решение только по `status`», одноразовость, fail-open, таймауты, IP за прокси.

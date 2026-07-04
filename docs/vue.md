@@ -88,6 +88,27 @@ async function onSubmit() {
 * **Закрытие окна задания.** Документированного события «пользователь отменил проверку» нет. Паттерн шаблона: по `challenge-hidden` ждать ~400 мс — если за это время не пришёл `callback` с токеном (при успехе события идут почти одновременно, callback обычно первым), значит пользователь закрыл окно — отклоняй ожидание с кодом `challenge-closed`. Без этого паттерна submit может «зависнуть» навсегда.
 * **Уведомление об обработке данных** (блок-«щит») обязательно: настраивай позицию через `shieldPosition`; про `hideShield` см. предупреждение в [invisible-captcha.md](invisible-captcha.md).
 
+## Тёмная/светлая тема по переключателю сайта
+
+Если у сайта ручной переключатель темы (класс `dark` на `<html>` — Tailwind, @nuxtjs/color-mode),
+«Динамическая цветовая схема» сама по себе не поможет: она следует теме ОС, а не сайта
+(механика — [theming.md](theming.md)). Composable принимает `theme` (в т.ч. `Ref`) и пересоздаёт
+виджет при смене значения:
+
+```ts
+// Nuxt + @nuxtjs/color-mode; в чистом Vue — любой реактивный источник темы
+const colorMode = useColorMode();
+const captchaTheme = computed(() => (colorMode.value === 'dark' ? 'dark' : 'light'));
+const { token, reset } = useSmartCaptcha(container, {
+  sitekey: import.meta.env.VITE_SMARTCAPTCHA_SITEKEY,
+  theme: captchaTheme, // Ref → re-render при переключении темы сайта; токен сбрасывается
+});
+```
+
+У капчи в Yandex Cloud должна быть включена «Динамическая цветовая схема» — без неё у виджета
+нет тёмных стилей. Параметр `theme` недокументированный — детали и как перепроверять при
+обновлениях captcha.js: [theming.md](theming.md).
+
 ## Nuxt / SSR
 
 `window` и `captcha.js` существуют только в браузере. В composable вся работа начинается в `onMounted` (выполняется только на клиенте), поэтому он SSR-безопасен; не вызывай `loadSmartCaptchaScript()` вне lifecycle-хуков на сервере. В Nuxt при сомнениях оборачивай виджет в `<ClientOnly>`. Существует community-модуль `nuxt-yandex-smartcaptcha` (Nuxt 3/4).

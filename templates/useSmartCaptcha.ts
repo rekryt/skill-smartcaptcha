@@ -4,6 +4,7 @@
  *
  * У Яндекса нет официального Vue-пакета, поэтому интеграция строится на расширенном
  * методе виджета (captcha.js?render=onload + window.smartCaptcha.render()).
+ * SSR-безопасен: вся работа с window начинается в onMounted (только клиент).
  *
  * Composable закрывает все SPA-грабли, которые иначе приходится решать вручную:
  *  - скрипт captcha.js грузится ОДИН раз на всё приложение (синглтон-Promise;
@@ -12,13 +13,16 @@
  *  - onBeforeUnmount → отписки + destroy(widgetId) — обязательно при роутинге SPA;
  *  - token-expired → обнуление токена + reset() (токен живёт 5 минут);
  *  - javascript-error → успех НЕ засчитывается (потенциальная уязвимость);
- *  - executeAndWait() — невидимая капча как Promise<token> прямо в обработчике submit.
+ *  - executeAndWait() — невидимая капча как Promise<token> прямо в обработчике submit;
+ *  - theme ('light'/'dark'/'auto', в т.ч. Ref) — тема виджета по теме САЙТА с пересозданием
+ *    при переключении (../docs/theming.md; параметр недокументированный, выверен по captcha.js).
  */
-import { onBeforeUnmount, onMounted, readonly, ref, type Ref } from 'vue';
+import { isRef, onBeforeUnmount, onMounted, readonly, ref, unref, watch, type Ref } from 'vue';
 import type {
   ShieldPosition,
   SmartCaptchaApi,
   SmartCaptchaLang,
+  SmartCaptchaTheme,
   UnsubscribeFn,
   WidgetId,
 } from './smartcaptcha';
@@ -89,6 +93,13 @@ export interface UseSmartCaptchaOptions {
   shieldPosition?: ShieldPosition;
   /** Скрыть блок уведомления — тогда уведомите об обработке данных иным способом. */
   hideShield?: boolean;
+  /**
+   * Тема виджета ('light'/'dark'/'auto'): недокументированный параметр render(), уходит в URL
+   * iframe виджета (см. ./smartcaptcha.d.ts и ../docs/theming.md). Ref → при смене значения виджет
+   * ПЕРЕСОЗДАЁТСЯ (тема фиксируется в URL при render, на лету не меняется); текущий токен
+   * при этом сбрасывается. Требует включённой «Динамической цветовой схемы» у капчи.
+   */
+  theme?: SmartCaptchaTheme | Ref<SmartCaptchaTheme>;
 }
 
 /** Ошибка невидимой проверки с машиночитаемым кодом причины. */
@@ -142,6 +153,85 @@ export function useSmartCaptcha(container: Ref<HTMLElement | null>, options: Use
     }
   }
 
+  /** Отрисовывает виджет в контейнере и подписывается на его события. */
+  function mountWidget(): void {
+    if (!api || !container.value) {
+      return;
+    }
+
+    widgetId = api.render(container.value, {
+      sitekey: options.sitekey,
+      hl: options.hl,
+      test: options.test,
+      invisible: options.invisible,
+      shieldPosition: options.shieldPosition,
+      hideShield: options.hideShield,
+      theme: options.theme !== undefined ? unref(options.theme) : undefined,
+      callback: (value) => {
+        clearTimeout(challengeHiddenTimer);
+        token.value = value;
+        error.value = null;
+        if (pending) {
+          const p = pending;
+          pending = null;
+          p.resolve(value);
+        }
+      },
+    });
+
+    unsubscribers = [
+      api.subscribe(widgetId, 'challenge-visible', () => {
+        challengeVisible.value = true;
+      }),
+      api.subscribe(widgetId, 'challenge-hidden', () => {
+        challengeVisible.value = false;
+        // Окно задания закрылось. Если это успех — callback придёт следом,
+        // события почти одновременны. Небольшая задержка даёт callback'у
+        // сработать первым; если токена так и нет — пользователь закрыл окно.
+        clearTimeout(challengeHiddenTimer);
+        challengeHiddenTimer = setTimeout(() => {
+          rejectPending(new SmartCaptchaError('challenge-closed', 'Проверка отменена: окно с заданием закрыто'));
+        }, 400);
+      }),
+      api.subscribe(widgetId, 'token-expired', () => {
+        // Токен живёт 5 минут: сбрасываем виджет, чтобы пройти проверку заново.
+        token.value = null;
+        error.value = 'Срок действия проверки истёк — пройдите её ещё раз.';
+        if (api && widgetId !== null) {
+          api.reset(widgetId);
+        }
+      }),
+      api.subscribe(widgetId, 'network-error', () => {
+        error.value = 'Сетевая ошибка при проверке. Проверьте соединение и попробуйте ещё раз.';
+        rejectPending(new SmartCaptchaError('network-error', 'Сетевая ошибка SmartCaptcha'));
+      }),
+      api.subscribe(widgetId, 'javascript-error', (jsError) => {
+        // Критический сбой JS: засчитывать успешное прохождение нельзя.
+        token.value = null;
+        error.value = 'Ошибка в работе проверки. Обновите страницу и попробуйте снова.';
+        console.error('SmartCaptcha javascript-error:', jsError);
+        rejectPending(new SmartCaptchaError('javascript-error', 'Критическая ошибка JS в виджете'));
+      }),
+    ];
+
+    ready.value = true;
+  }
+
+  /** Полный демонтаж виджета (отписки + destroy) — для пересоздания при смене темы. */
+  function teardownWidget(): void {
+    rejectPending(new SmartCaptchaError('reset', 'Виджет пересоздаётся'));
+    for (const unsubscribe of unsubscribers) {
+      unsubscribe();
+    }
+    unsubscribers = [];
+    if (api && widgetId !== null) {
+      api.destroy(widgetId);
+    }
+    widgetId = null;
+    token.value = null;
+    ready.value = false;
+  }
+
   onMounted(async () => {
     try {
       const loaded = await loadSmartCaptchaScript();
@@ -151,67 +241,24 @@ export function useSmartCaptcha(container: Ref<HTMLElement | null>, options: Use
         return;
       }
       api = loaded;
-
-      widgetId = api.render(container.value, {
-        sitekey: options.sitekey,
-        hl: options.hl,
-        test: options.test,
-        invisible: options.invisible,
-        shieldPosition: options.shieldPosition,
-        hideShield: options.hideShield,
-        callback: (value) => {
-          clearTimeout(challengeHiddenTimer);
-          token.value = value;
-          error.value = null;
-          if (pending) {
-            const p = pending;
-            pending = null;
-            p.resolve(value);
-          }
-        },
-      });
-
-      unsubscribers = [
-        api.subscribe(widgetId, 'challenge-visible', () => {
-          challengeVisible.value = true;
-        }),
-        api.subscribe(widgetId, 'challenge-hidden', () => {
-          challengeVisible.value = false;
-          // Окно задания закрылось. Если это успех — callback придёт следом,
-          // события почти одновременны. Небольшая задержка даёт callback'у
-          // сработать первым; если токена так и нет — пользователь закрыл окно.
-          clearTimeout(challengeHiddenTimer);
-          challengeHiddenTimer = setTimeout(() => {
-            rejectPending(new SmartCaptchaError('challenge-closed', 'Проверка отменена: окно с заданием закрыто'));
-          }, 400);
-        }),
-        api.subscribe(widgetId, 'token-expired', () => {
-          // Токен живёт 5 минут: сбрасываем виджет, чтобы пройти проверку заново.
-          token.value = null;
-          error.value = 'Срок действия проверки истёк — пройдите её ещё раз.';
-          if (api && widgetId !== null) {
-            api.reset(widgetId);
-          }
-        }),
-        api.subscribe(widgetId, 'network-error', () => {
-          error.value = 'Сетевая ошибка при проверке. Проверьте соединение и попробуйте ещё раз.';
-          rejectPending(new SmartCaptchaError('network-error', 'Сетевая ошибка SmartCaptcha'));
-        }),
-        api.subscribe(widgetId, 'javascript-error', (jsError) => {
-          // Критический сбой JS: засчитывать успешное прохождение нельзя.
-          token.value = null;
-          error.value = 'Ошибка в работе проверки. Обновите страницу и попробуйте снова.';
-          console.error('SmartCaptcha javascript-error:', jsError);
-          rejectPending(new SmartCaptchaError('javascript-error', 'Критическая ошибка JS в виджете'));
-        }),
-      ];
-
-      ready.value = true;
+      mountWidget();
     } catch (loadError) {
       error.value = 'Не удалось загрузить проверку «Я не робот». Обновите страницу.';
       console.error(loadError);
     }
   });
+
+  // Смена темы сайта: параметр theme фиксируется в URL iframe при render() — на лету он не
+  // меняется, поэтому виджет пересоздаём (токен сбрасывается — он всё равно одноразовый).
+  if (isRef(options.theme)) {
+    watch(options.theme, () => {
+      if (unmounted || !api) {
+        return;
+      }
+      teardownWidget();
+      mountWidget();
+    });
+  }
 
   onBeforeUnmount(() => {
     unmounted = true;

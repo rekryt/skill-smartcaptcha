@@ -19,6 +19,14 @@ export type WidgetId = number;
 /** Поддерживаемые языки виджета и задания. */
 export type SmartCaptchaLang = 'ru' | 'en' | 'be' | 'kk' | 'tt' | 'uk' | 'uz' | 'tr';
 
+/**
+ * Тема виджета. НЕДОКУМЕНТИРОВАННЫЙ параметр — выверен по исходнику captcha.js (июль 2026):
+ * значение уходит в URL iframe виджета; 'dark' — принудительно тёмная схема, 'auto' —
+ * автопереключение по prefers-color-scheme браузера, иначе светлая. Тёмные стили у виджета
+ * есть, когда у капчи в Yandex Cloud включена «Динамическая цветовая схема».
+ */
+export type SmartCaptchaTheme = 'light' | 'dark' | 'auto';
+
 /** Расположение блока с уведомлением об обработке данных. */
 export type ShieldPosition =
   | 'top-left'
@@ -54,6 +62,8 @@ export interface SmartCaptchaRenderParams {
   hideShield?: boolean;
   /** Собственные данные для правил показа вариантов заданий (все ключи и значения — суммарно до 512 символов). */
   metadata?: Record<string, string>;
+  /** Тема виджета (недокументированный параметр, см. {@link SmartCaptchaTheme}). */
+  theme?: SmartCaptchaTheme;
 }
 
 /** Полезная нагрузка события javascript-error. */
